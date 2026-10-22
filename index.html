@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jeepney Routes Manila</title>
+<meta name="description" content="A free, community-built map of jeepney routes in Manila.">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    --bg: #ffffff;
+    --panel: #f7f6f2;
+    --ink: #1f2328;
+    --muted: #636c76;
+    --line: #dcd9d0;
+    --accent: #c2410c;
+    --accent-ink: #ffffff;
+    --ok: #2f7d32;
+    --warn: #a15c00;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: var(--bg); }
+  #app { display: grid; grid-template-columns: 380px 1fr; height: 100%; }
+  #panel { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  #map { height: 100%; width: 100%; }
+  header { padding: 14px 16px 8px; }
+  header h1 { font-size: 18px; margin: 0; }
+  header p { margin: 2px 0 0; font-size: 12.5px; color: var(--muted); }
+  nav { display: flex; gap: 4px; padding: 0 12px; border-bottom: 1px solid var(--line); }
+  nav button { flex: 1; padding: 9px 4px; border: 0; background: none; font: inherit; font-size: 13.5px; color: var(--muted); cursor: pointer; border-bottom: 3px solid transparent; }
+  nav button.active { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
+  section { display: none; padding: 12px 16px 16px; overflow-y: auto; flex: 1; min-height: 0; }
+  section.active { display: block; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+  input[type=text], select, textarea { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; font-size: 14px; background: #fff; color: var(--ink); }
+  textarea { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; min-height: 120px; }
+  .row { display: flex; gap: 6px; }
+  .row > * { flex: 1; }
+  button.btn { padding: 9px 12px; border-radius: 8px; border: 1px solid var(--line); background: #fff; font: inherit; font-size: 13.5px; cursor: pointer; color: var(--ink); }
+  button.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  button.btn:disabled { opacity: .5; cursor: default; }
+  button.btn.active { outline: 2px solid var(--accent); }
+  .list { list-style: none; margin: 10px 0 0; padding: 0; }
+  .item { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer; border-left: 6px solid var(--c, var(--accent)); }
+  .item:hover, .item.sel { border-color: var(--c, var(--accent)); box-shadow: 0 1px 6px rgba(0,0,0,.08); }
+  .item h3 { margin: 0 0 2px; font-size: 14.5px; }
+  .item .meta { font-size: 12.5px; color: var(--muted); }
+  .tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 999px; margin-left: 4px; vertical-align: 1px; }
+  .tag.unv { background: #fff1d6; color: var(--warn); }
+  .tag.ver { background: #dff3e0; color: var(--ok); }
+  .note { font-size: 12.5px; color: var(--muted); background: #fff; border: 1px dashed var(--line); border-radius: 8px; padding: 8px 10px; margin: 8px 0; }
+  .status { font-size: 12.5px; color: var(--muted); margin-top: 6px; min-height: 16px; }
+  #detail { margin-top: 10px; }
+  .pin { background: var(--accent); color: #fff; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+  .pin.b { background: #1d4ed8; }
+  .pin.w { background: #444; width: 12px; height: 12px; font-size: 0; }
+  footer { padding: 8px 16px; font-size: 11.5px; color: var(--muted); border-top: 1px solid var(--line); }
+  @media (max-width: 760px) {
+    #app { grid-template-columns: 1fr; grid-template-rows: 46vh 1fr; }
+    #map { order: -1; }
+    #panel { border-right: 0; border-top: 1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="panel">
+    <header>
+      <h1>Jeepney Routes Manila</h1>
+      <p>Free, community-built. Help the next commuter by adding what you know.</p>
+    </header>
+    <nav>
+      <button data-tab="routes" class="active">Routes</button>
+      <button data-tab="trip">Trip</button>
+      <button data-tab="add">Add route</button>
+    </nav>
+
+    <!-- ROUTES TAB -->
+    <section id="tab-routes" class="active">
+      <input type="text" id="q" placeholder="Search route, street, or landmark (e.g. Pedro Gil)" autocomplete="off">
+      <div class="note">Routes marked <b>Unverified</b> are placeholders. Ride them, check them, and correct them before trusting them.</div>
+      <ul class="list" id="list"></ul>
+      <div id="detail"></div>
+    </section>
+
+    <!-- TRIP TAB -->
+    <section id="tab-trip">
+      <label for="aText">From</label>
+      <div class="row">
+        <input type="text" id="aText" placeholder="e.g. Malate Church" style="flex:3">
+        <button class="btn" id="aPick" style="flex:1">Pick on map</button>
+      </div>
+      <label for="bText">To</label>
+      <div class="row">
+        <input type="text" id="bText" placeholder="e.g. Sta. Ana Church" style="flex:3">
+        <button class="btn" id="bPick" style="flex:1">Pick on map</button>
+      </div>
+      <label for="radius">Walking distance to the jeepney route</label>
+      <select id="radius">
+        <option value="200">Up to 200 m</option>
+        <option value="300" selected>Up to 300 m</option>
+        <option value="500">Up to 500 m</option>
+      </select>
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary" id="findBtn">Find routes</button>
+        <button class="btn" id="clearTrip">Clear</button>
+      </div>
+      <div class="status" id="tripStatus"></div>
+      <ul class="list" id="tripList"></ul>
+      <div class="note">This finds routes that pass near both places. It does not yet check direction or transfers.</div>
+    </section>
+
+    <!-- ADD ROUTE TAB -->
+    <section id="tab-add">
+      <div class="note">
+        Click the map to drop stops along the route, in order, from start to end.
+        Then snap it to the roads and copy the result. You can send the copied data to the site owner.
+      </div>
+      <button class="btn" id="buildToggle">Start dropping points</button>
+      <label for="bName">Route name</label>
+      <input type="text" id="bName" placeholder="e.g. Pedro Gil - Sta. Ana">
+      <div class="row">
+        <div><label for="bFrom">From (terminal)</label><input type="text" id="bFrom"></div>
+        <div><label for="bTo">To (terminal)</label><input type="text" id="bTo"></div>
+      </div>
+      <div class="row">
+        <div><label for="bFare">Fare (PHP)</label><input type="text" id="bFare" placeholder="e.g. 13"></div>
+        <div><label for="bColor">Color</label><input type="text" id="bColor" value="#1d4ed8"></div>
+      </div>
+      <label for="bVia">Streets and landmarks it passes (comma separated)</label>
+      <input type="text" id="bVia" placeholder="Taft Avenue, Pedro Gil, Paco Market">
+      <div class="row" style="margin-top:12px">
+        <button class="btn" id="bUndo">Undo point</button>
+        <button class="btn" id="bClear">Clear</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn primary" id="bSnap">Snap to roads</button>
+        <button class="btn" id="bCopy">Copy data</button>
+      </div>
+      <div class="status" id="bStatus"></div>
+      <label for="bOut">Route data</label>
+      <textarea id="bOut" readonly></textarea>
+    </section>
+
+    <footer>Map data &copy; OpenStreetMap contributors. Search by Nominatim. Road snapping by OSRM demo server.</footer>
+  </aside>
+  <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+/* =====================================================================
+   ROUTE DATA
+   Add real routes here. Two ways to describe a route:
+     1) "path": [[lat,lng], ...]      exact line (what the Add route tab produces)
+     2) "waypoints": [[lat,lng], ...] a few points; the app snaps them to roads
+   Set "verified": true only after someone has ridden and checked it.
+   ===================================================================== */
+const ROUTES = [
+  {
+    id: "sample-taft-1",
+    name: "SAMPLE: Taft Ave (Vito Cruz to Central Terminal)",
+    from: "Vito Cruz", to: "Central Terminal",
+    fare: "", color: "#c2410c", verified: false,
+    via: ["Taft Avenue", "Quirino", "Pedro Gil", "UN Avenue", "Malate", "Ermita"],
+    waypoints: [[14.5636, 120.9946], [14.5703, 120.9917], [14.5766, 120.9880], [14.5826, 120.9847], [14.5928, 120.9815]]
+  },
+  {
+    id: "sample-pedrogil-1",
+    name: "SAMPLE: Pedro Gil to Sta. Ana",
+    from: "Taft / Pedro Gil", to: "Sta. Ana",
+    fare: "", color: "#1d4ed8", verified: false,
+    via: ["Pedro Gil", "Paco", "Sta. Ana", "Paz Guazon"],
+    waypoints: [[14.5766, 120.9880], [14.5775, 120.9987], [14.5819, 121.0141]]
+  }
+];
+
+/* ===================== MAP SETUP ===================== */
+const RADIUS_DEFAULT = 300;
+const map = L.map('map').setView([14.580, 120.995], 14);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+}).addTo(map);
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const lines = {};          // route id -> L.polyline
+const endMarkers = L.layerGroup().addTo(map);
+let selectedId = null;
+let mode = null;           // 'pickA' | 'pickB' | 'build' | null
+
+/* ===================== GEOMETRY ===================== */
+function routePath(r) { return r.path || r.waypoints || []; }
+
+function distToPathM(p, path) {
+  if (!path.length) return Infinity;
+  const kx = Math.cos(p[0] * Math.PI / 180) * 111320, ky = 110574;
+  const px = p[1] * kx, py = p[0] * ky;
+  if (path.length === 1) return Math.hypot(px - path[0][1] * kx, py - path[0][0] * ky);
+  let best = Infinity;
+  for (let i = 0; i < path.length - 1; i++) {
+    const ax = path[i][1] * kx, ay = path[i][0] * ky;
+    const bx = path[i + 1][1] * kx, by = path[i + 1][0] * ky;
+    const dx = bx - ax, dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    let t = len2 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const d = Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+/* ===================== ROAD SNAPPING (OSRM demo, free) ===================== */
+async function snapToRoads(points) {
+  const coords = points.map(p => p[1].toFixed(6) + ',' + p[0].toFixed(6)).join(';');
+  const url = 'https://router.project-osrm.org/route/v1/driving/' + coords + '?overview=full&geometries=geojson';
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Routing service returned ' + res.status);
+  const data = await res.json();
+  if (!data.routes || !data.routes[0]) throw new Error('No road path found');
+  return data.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
+}
+
+function thin(path, minM = 8) {
+  const out = [path[0]];
+  for (let i = 1; i < path.length - 1; i++) {
+    const last = out[out.length - 1];
+    const kx = Math.cos(last[0] * Math.PI / 180) * 111320;
+    if (Math.hypot((path[i][1] - last[1]) * kx, (path[i][0] - last[0]) * 110574) >= minM) out.push(path[i]);
+  }
+  out.push(path[path.length - 1]);
+  return out.map(p => [+p[0].toFixed(5), +p[1].toFixed(5)]);
+}
+
+async function resolvePaths() {
+  for (const r of ROUTES) {
+    if (r.path || !r.waypoints) continue;
+    const key = 'osrm1:' + r.id + ':' + JSON.stringify(r.waypoints);
+    try {
+      let cached = null;
+      try { cached = JSON.parse(localStorage.getItem(key) || 'null'); } catch (e) {}
+      if (cached) r.path = cached;
+      else {
+        r.path = thin(await snapToRoads(r.waypoints));
+        try { localStorage.setItem(key, JSON.stringify(r.path)); } catch (e) {}
+      }
+      if (lines[r.id]) lines[r.id].setLatLngs(r.path);
+    } catch (e) { /* fall back to straight lines through waypoints */ }
+  }
+}
+
+/* ===================== ROUTES TAB ===================== */
+function drawAll() {
+  ROUTES.forEach(r => {
+    lines[r.id] = L.polyline(routePath(r), { color: r.color, weight: 4, opacity: 0.55 }).addTo(map);
+    lines[r.id].on('click', () => selectRoute(r.id));
+  });
+}
+
+function styleLines() {
+  ROUTES.forEach(r => {
+    const on = r.id === selectedId;
+    lines[r.id].setStyle({ weight: on ? 7 : 4, opacity: selectedId ? (on ? 1 : 0.25) : 0.55 });
+    if (on) lines[r.id].bringToFront();
+  });
+}
+
+function routeCard(r, extra) {
+  const tag = r.verified ? '<span class="tag ver">Verified</span>' : '<span class="tag unv">Unverified</span>';
+  const fare = r.fare ? ' &middot; PHP ' + esc(r.fare) : '';
+  return '<li class="item' + (r.id === selectedId ? ' sel' : '') + '" data-id="' + esc(r.id) + '" style="--c:' + esc(r.color) + '">' +
+    '<h3>' + esc(r.name) + tag + '</h3>' +
+    '<div class="meta">' + esc(r.from) + ' &rarr; ' + esc(r.to) + fare + '</div>' +
+    (extra ? '<div class="meta">' + extra + '</div>' : '') + '</li>';
+}
+
+function renderList() {
+  const terms = $('q').value.toLowerCase().split(/\s+/).filter(Boolean);
+  const shown = ROUTES.filter(r => {
+    const hay = [r.name, r.from, r.to, ...(r.via || [])].join(' ').toLowerCase();
+    return terms.every(t => hay.includes(t));
+  });
+  $('list').innerHTML = shown.length ? shown.map(r => routeCard(r)).join('') :
+    '<li class="note">No routes match yet. If you know one, add it in the Add route tab.</li>';
+}
+
+function selectRoute(id) {
+  selectedId = id;
+  const r = ROUTES.find(x => x.id === id);
+  styleLines();
+  endMarkers.clearLayers();
+  const p = routePath(r);
+  if (p.length) {
+    L.marker(p[0], { icon: L.divIcon({ className: '', html: '<div class="pin">A</div>', iconSize: [26, 26], iconAnchor: [13, 13] }) }).addTo(endMarkers).bindTooltip(r.from);
+    L.marker(p[p.length - 1], { icon: L.divIcon({ className: '', html: '<div class="pin b">B</div>', iconSize: [26, 26], iconAnchor: [13, 13] }) }).addTo(endMarkers).bindTooltip(r.to);
+    map.fitBounds(lines[id].getBounds(), { padding: [40, 40] });
+  }
+  $('detail').innerHTML = '<div class="note"><b>' + esc(r.name) + '</b><br>' +
+    esc(r.from) + ' to ' + esc(r.to) + (r.fare ? '<br>Fare: PHP ' + esc(r.fare) : '') +
+    ((r.via || []).length ? '<br>Passes: ' + r.via.map(esc).join(', ') : '') +
+    (r.verified ? '' : '<br><b>Unverified.</b> Please check before relying on it.') + '</div>';
+  renderList();
+  renderTrip();
+}
+
+document.addEventListener('click', (e) => {
+  const li = e.target.closest('.item');
+  if (li) selectRoute(li.dataset.id);
+});
+$('q').addEventListener('input', renderList);
+
+/* ===================== TABS ===================== */
+document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('active', x === b));
+  document.querySelectorAll('section').forEach(s => s.classList.toggle('active', s.id === 'tab-' + b.dataset.tab));
+  if (b.dataset.tab !== 'add') setMode(null);
+  if (b.dataset.tab === 'add') $('buildToggle').focus();
+}));
+
+/* ===================== MAP CLICK MODES ===================== */
+function setMode(m) {
+  mode = m;
+  $('aPick').classList.toggle('active', m === 'pickA');
+  $('bPick').classList.toggle('active', m === 'pickB');
+  $('buildToggle').classList.toggle('active', m === 'build');
+  $('buildToggle').textContent = m === 'build' ? 'Dropping points: click the map (tap to stop)' : 'Start dropping points';
+  map.getContainer().style.cursor = m ? 'crosshair' : '';
+}
+
+map.on('click', (e) => {
+  const ll = [e.latlng.lat, e.latlng.lng];
+  if (mode === 'pickA') { setTripPoint('A', ll, 'Point on map'); $('aText').value = ''; setMode(null); }
+  else if (mode === 'pickB') { setTripPoint('B', ll, 'Point on map'); $('bText').value = ''; setMode(null); }
+  else if (mode === 'build') addBuildPoint(ll);
+});
+
+/* ===================== TRIP TAB ===================== */
+const trip = { A: null, B: null };
+const tripMarkers = L.layerGroup().addTo(map);
+
+function setTripPoint(which, ll, label) {
+  trip[which] = { ll, label };
+  tripMarkers.clearLayers();
+  ['A', 'B'].forEach(k => {
+    if (trip[k]) L.marker(trip[k].ll, { icon: L.divIcon({ className: '', html: '<div class="pin' + (k === 'B' ? ' b' : '') + '">' + k + '</div>', iconSize: [26, 26], iconAnchor: [13, 13] }) }).addTo(tripMarkers);
+  });
+}
+
+async function geocode(q) {
+  const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=ph' +
+    '&viewbox=120.90,14.75,121.12,14.38&bounded=1&q=' + encodeURIComponent(q);
+  const res = await fetch(url, { headers: { 'Accept-Language': 'en' } });
+  if (!res.ok) throw new Error('Place search failed');
+  const data = await res.json();
+  if (!data.length) return null;
+  return { ll: [parseFloat(data[0].lat), parseFloat(data[0].lon)], label: data[0].display_name };
+}
+
+async function findTrip() {
+  const st = $('tripStatus');
+  st.textContent = 'Searching...';
+  try {
+    for (const k of ['A', 'B']) {
+      const txt = $(k.toLowerCase() + 'Text').value.trim();
+      if (txt) {
+        const g = await geocode(txt);
+        if (!g) { st.textContent = 'Could not find "' + txt + '". Try a landmark or street name, or use Pick on map.'; return; }
+        setTripPoint(k, g.ll, g.label);
+      }
+    }
+    if (!trip.A || !trip.B) { st.textContent = 'Enter or pick both a start and a destination.'; return; }
+    const bounds = L.latLngBounds([trip.A.ll, trip.B.ll]);
+    map.fitBounds(bounds, { padding: [60, 60], maxZoom: 16 });
+    renderTrip();
+  } catch (err) {
+    st.textContent = 'Something went wrong: ' + err.message;
+  }
+}
+
+function renderTrip() {
+  const list = $('tripList'), st = $('tripStatus');
+  if (!trip.A || !trip.B) { list.innerHTML = ''; return; }
+  const radius = parseInt($('radius').value, 10) || RADIUS_DEFAULT;
+  const hits = ROUTES.map(r => {
+    const p = routePath(r);
+    return { r, dA: distToPathM(trip.A.ll, p), dB: distToPathM(trip.B.ll, p) };
+  }).filter(h => h.dA <= radius && h.dB <= radius).sort((x, y) => (x.dA + x.dB) - (y.dA + y.dB));
+  st.textContent = hits.length ? hits.length + ' route(s) pass near both places.' :
+    'No route in our data passes near both places. Try a larger distance, or add the missing route.';
+  list.innerHTML = hits.map(h => routeCard(h.r, 'About ' + Math.round(h.dA) + ' m walk from A, ' + Math.round(h.dB) + ' m from B')).join('');
+}
+
+$('findBtn').addEventListener('click', findTrip);
+['aText', 'bText'].forEach(id => $(id).addEventListener('keydown', e => { if (e.key === 'Enter') findTrip(); }));
+$('radius').addEventListener('change', renderTrip);
+$('aPick').addEventListener('click', () => setMode(mode === 'pickA' ? null : 'pickA'));
+$('bPick').addEventListener('click', () => setMode(mode === 'pickB' ? null : 'pickB'));
+$('clearTrip').addEventListener('click', () => {
+  trip.A = trip.B = null; tripMarkers.clearLayers();
+  $('aText').value = $('bText').value = ''; $('tripList').innerHTML = ''; $('tripStatus').textContent = '';
+});
+
+/* ===================== ADD ROUTE (BUILDER) ===================== */
+const build = { points: [], snapped: null };
+const buildLayer = L.layerGroup().addTo(map);
+let buildLine = null;
+
+function redrawBuild() {
+  buildLayer.clearLayers();
+  build.points.forEach((p, i) => {
+    L.marker(p, { icon: L.divIcon({ className: '', html: '<div class="pin w">' + (i + 1) + '</div>', iconSize: [12, 12], iconAnchor: [6, 6] }) }).addTo(buildLayer);
+  });
+  const shown = build.snapped || build.points;
+  if (shown.length > 1) L.polyline(shown, { color: $('bColor').value || '#1d4ed8', weight: 5, dashArray: build.snapped ? null : '6 6' }).addTo(buildLayer);
+  updateOut();
+}
+
+function addBuildPoint(ll) { build.points.push(ll); build.snapped = null; $('bStatus').textContent = build.points.length + ' point(s).'; redrawBuild(); }
+$('buildToggle').addEventListener('click', () => setMode(mode === 'build' ? null : 'build'));
+$('bUndo').addEventListener('click', () => { build.points.pop(); build.snapped = null; redrawBuild(); });
+$('bClear').addEventListener('click', () => { build.points = []; build.snapped = null; $('bStatus').textContent = ''; redrawBuild(); });
+['bName', 'bFrom', 'bTo', 'bFare', 'bColor', 'bVia'].forEach(id => $(id).addEventListener('input', () => { redrawBuild(); }));
+
+$('bSnap').addEventListener('click', async () => {
+  if (build.points.length < 2) { $('bStatus').textContent = 'Drop at least 2 points first.'; return; }
+  $('bStatus').textContent = 'Snapping to roads...';
+  try {
+    build.snapped = thin(await snapToRoads(build.points));
+    $('bStatus').textContent = 'Snapped. Check the line follows the real jeepney route, then copy.';
+    redrawBuild();
+  } catch (err) {
+    $('bStatus').textContent = 'Snapping failed (' + err.message + '). You can still copy the points as they are.';
+  }
+});
+
+function buildObject() {
+  const name = $('bName').value.trim() || 'Unnamed route';
+  return {
+    id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'route',
+    name,
+    from: $('bFrom').value.trim(),
+    to: $('bTo').value.trim(),
+    fare: $('bFare').value.trim(),
+    color: $('bColor').value.trim() || '#1d4ed8',
+    verified: false,
+    via: $('bVia').value.split(',').map(s => s.trim()).filter(Boolean),
+    path: (build.snapped || build.points).map(p => [+p[0].toFixed(5), +p[1].toFixed(5)])
+  };
+}
+
+function updateOut() { $('bOut').value = build.points.length ? JSON.stringify(buildObject(), null, 1) : ''; }
+
+$('bCopy').addEventListener('click', async () => {
+  if (!$('bOut').value) { $('bStatus').textContent = 'Nothing to copy yet.'; return; }
+  try { await navigator.clipboard.writeText($('bOut').value); }
+  catch (e) { $('bOut').select(); document.execCommand('copy'); }
+  $('bStatus').textContent = 'Copied. Paste it into the ROUTES list in index.html, or send it to the site owner.';
+});
+
+/* ===================== START ===================== */
+drawAll();
+renderList();
+resolvePaths();
+</script>
+</body>
+</html>
